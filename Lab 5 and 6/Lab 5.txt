@@ -1,0 +1,12 @@
+1. 1334
+2. No
+3. Whether it increases the timeout depends on the deviation
+4. 133ms
+5. Flow Control
+6. 2RTT
+7. Triple duplicate ACKs
+8. T
+9. SMTP, HTTP, FTP
+10. 0.8s
+11. 3s
+12. 40 pkts/s

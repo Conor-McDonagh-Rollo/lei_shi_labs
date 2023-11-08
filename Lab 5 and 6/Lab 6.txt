@@ -1,0 +1,15 @@
+1. T
+2. T
+3. T
+4. T
+5. Time out
+6. No
+7. Triple Duplicate Ack
+8. Yes
+9. Less
+10. The TCP window increases non-linearly to implement congestion control, preventing network overload by gradually increasing the transmission rate.
+11. With an MSS of 1000 bytes and an RTT of 100ms, the sender would fully utilize the window after 50ms, which is the one-way latency.
+12. 300ms
+13. 1200ms
+14. 300ms since it includes three full cycles of the RTT, which is given as 100ms.
+15. D is higher than B because other people sharing the network may have increased the overall network traffic, leading to increased congestion, which triggers the TCP congestion control.
