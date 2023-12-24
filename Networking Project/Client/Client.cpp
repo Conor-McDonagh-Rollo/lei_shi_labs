@@ -2,6 +2,10 @@
 #define MY_PORT 56000
 #define MY_IP "192.168.1.15"
 
+// dont set too low so server isn't overwheled
+#define SPEED 10
+//#define DEBUGGING
+
 #include <SFML/Graphics.hpp>
 #include <SFML/System.hpp>
 #include <WinSock2.h>
@@ -9,63 +13,75 @@
 #include <mutex>
 #include <iostream>
 
-struct Player {
-    sf::Vector2f position;
-    bool isIt;
 
-    void move(const sf::Vector2f& direction) {
-        position += direction;
-    }
+struct Player {
+    sf::Vector2f position {0,0};
+    bool isIt = false;
 };
 
 struct GameState {
     Player players[3];
-    bool gameRunning;
+    bool gameRunning = true;
 };
+
+void move(Player& player, const sf::Vector2f& direction) {
+    player.position += direction;
+}
 
 void sendPlayerPosition(SOCKET clientSocket, Player* player) {
     while (true) {
-        char positionBuffer[sizeof(sf::Vector2f)];
-        sf::Vector2f playerPosition = player->position; 
-        memcpy(positionBuffer, &playerPosition, sizeof(sf::Vector2f));
-        send(clientSocket, positionBuffer, sizeof(sf::Vector2f), 0);
+        char playerBuffer[sizeof(Player)];
+        Player newPlayer = *player;
+        memcpy(playerBuffer, &newPlayer, sizeof(Player));
+        send(clientSocket, playerBuffer, sizeof(Player), 0);
 
-        // dont set too low so server isn't overwheled
-        Sleep(25);
+        Sleep(SPEED);
     }
 }
 
 void receiveGameState(SOCKET clientSocket, GameState& gameState, int clientIndex, std::mutex& gameStateMutex) {
-    while (true) {
+    while (gameState.gameRunning) {
         char gameStateBuffer[sizeof(GameState)];
         int bytesReceived = recv(clientSocket, gameStateBuffer, sizeof(GameState), 0);
 
-        if (bytesReceived <= 0) {
-            // todo (server probably closed)
-            break;
+        if (bytesReceived > 0) {
+            std::lock_guard<std::mutex> lock(gameStateMutex);
+            memcpy(&gameState, gameStateBuffer, sizeof(GameState));
+            #ifdef DEBUGGING
+            std::cout << "RECEIVING: " <<gameState.players[clientIndex].position.x << ", " << gameState.players[clientIndex].position.y << std::endl;
+            #endif
         }
-
-        std::lock_guard<std::mutex> lock(gameStateMutex);
-        memcpy(&gameState, gameStateBuffer, sizeof(GameState));
+        else
+        {
+            gameState.gameRunning = false;
+        }
     }
 }
 
 // draw all players
 void drawPlayers(sf::RenderWindow& window, const GameState& gameState, int clientIndex) {
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 3; i++) {
         sf::RectangleShape playerShape(sf::Vector2f(50.0f, 50.0f)); // not very efficient but we ball
         playerShape.setPosition(gameState.players[i].position);
 
-        if (i == clientIndex) {
-            playerShape.setFillColor(sf::Color::Green); // Current player
-        } else if (gameState.players[i].isIt) {
+        if (gameState.players[i].isIt) {
             playerShape.setFillColor(sf::Color::Red); // Player that is "it"
+        }
+        else if (i == clientIndex) {
+            playerShape.setFillColor(sf::Color::Green); // Current player
         } else {
             playerShape.setFillColor(sf::Color::White); // Other player
         }
 
         window.draw(playerShape);
     }
+}
+
+bool checkCollision(const sf::Vector2f& pos1, float size1, const sf::Vector2f& pos2, float size2) {
+    sf::FloatRect box1(pos1.x, pos1.y, size1, size1);
+    sf::FloatRect box2(pos2.x, pos2.y, size2, size2);
+
+    return box1.intersects(box2);
 }
 
 int main()
@@ -103,10 +119,13 @@ int main()
     std::cout << "Connected as client " << clientIndex << std::endl;
 
     Player player;
-    player.position = sf::Vector2f(0, 0); // Initial position for debug
+    player.position = sf::Vector2f(100 * clientIndex, 200); // Initial position for debug
     player.isIt = false; // Initially the player is not "it" for debug
+    if (clientIndex == 0)
+        player.isIt = true;
 
     GameState gameState;
+    gameState.gameRunning = true;
     std::mutex gameStateMutex;
 
     // thread for sending player position to the server
@@ -116,7 +135,9 @@ int main()
 
     sf::RenderWindow window(sf::VideoMode(800, 600), "Tag Game");
 
-    while (true) {
+    while (gameState.gameRunning) {
+        if (!gameState.gameRunning)
+            return 0;
         sf::Event event;
         while (window.pollEvent(event)) {
             if (event.type == sf::Event::Closed)
@@ -135,14 +156,37 @@ int main()
         }
         {
             std::lock_guard<std::mutex> lock(gameStateMutex);
-            player.move(direction);  // Update players position
+            move(player, direction);  // Update players position
+        }
+        for (int i = 0; i < 3; i++)
+        {
+            if (i == clientIndex)
+                continue;
+            if (checkCollision(gameState.players[i].position, 50.f, player.position, 50.f))
+            {
+                if (gameState.players[i].isIt)
+                {
+                    Sleep(200);
+                    std::lock_guard<std::mutex> lock(gameStateMutex);
+                    player.isIt = true;
+                }
+                else if (player.isIt)
+                {
+                    std::lock_guard<std::mutex> lock(gameStateMutex);
+                    player.isIt = false;
+                }
+            }
         }
 
         window.clear(sf::Color::Black);
         drawPlayers(window, gameState, clientIndex);
         window.display();
+        
+        #ifdef DEBUGGING
+        std::cout << gameState.players[clientIndex].position.x << ", " << gameState.players[clientIndex].position.y << std::endl;
+        #endif
 
-        Sleep(25);
+        Sleep(SPEED);
     }
 
     // Clean up
@@ -155,6 +199,5 @@ int main()
 
     closesocket(clientSocket);
     WSACleanup();
-    system("pause");
 	return 1; // success
 }

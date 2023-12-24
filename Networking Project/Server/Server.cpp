@@ -1,3 +1,7 @@
+#define MY_PORT 56000
+#define SPEED 10
+//#define DEBUGGING
+
 #include <WinSock2.h>
 #include <SFML/Network.hpp>
 #include <iostream>
@@ -6,14 +10,13 @@
 #include <mutex>
 
 struct Player {
-    sf::Vector2f position;
-    bool isIt;
+    sf::Vector2f position {0,0};
+    bool isIt = false;
 };
 
 struct GameState {
     Player players[3];
-    bool gameRunning;
-    std::mutex mtx; // Mutex for thread safe access to game state
+    bool gameRunning = true;
 };
 
 struct ClientInfo {
@@ -45,7 +48,7 @@ struct ClientInfo {
     ClientInfo& operator=(ClientInfo&&) = default;
 };
 
-void handleClient(int clientIndex, SOCKET clientSocket, GameState& gameState) {
+void handleClient(int clientIndex, SOCKET clientSocket, GameState& gameState, std::mutex& gameStateMutex) {
     while (gameState.gameRunning) {
         // Receive the new position
         char positionBuffer[256];
@@ -55,7 +58,12 @@ void handleClient(int clientIndex, SOCKET clientSocket, GameState& gameState) {
             memcpy(&newPosition, positionBuffer, sizeof(sf::Vector2f));
 
             // Lock the gameState before modifying
-            std::lock_guard<std::mutex> lock(gameState.mtx);
+            std::lock_guard<std::mutex> lock(gameStateMutex);
+            #ifdef DEBUGGING
+            std::cout << "Broadcasting client index " << clientIndex << " which was " << 
+            gameState.players[clientIndex].position.x << ", " << gameState.players[clientIndex].position.y
+                        << " as the new position " << newPosition.x << ", " << newPosition.y << ".\n";
+            #endif
             gameState.players[clientIndex].position = newPosition;
         }
 
@@ -66,7 +74,7 @@ void handleClient(int clientIndex, SOCKET clientSocket, GameState& gameState) {
             bool tagged;
             memcpy(&tagged, tagBuffer, sizeof(bool));
 
-            std::lock_guard<std::mutex> lock(gameState.mtx);
+            std::lock_guard<std::mutex> lock(gameStateMutex);
             if (tagged) {
                 gameState.players[clientIndex].isIt = true;
             } else {
@@ -77,7 +85,7 @@ void handleClient(int clientIndex, SOCKET clientSocket, GameState& gameState) {
         // Send updated game state to this player
         char gameStateBuffer[1024];
         {
-            std::lock_guard<std::mutex> lock(gameState.mtx);
+            std::lock_guard<std::mutex> lock(gameStateMutex);
             memcpy(gameStateBuffer, &gameState, sizeof(GameState));
         }
         send(clientSocket, gameStateBuffer, sizeof(GameState), 0);
@@ -87,7 +95,7 @@ void handleClient(int clientIndex, SOCKET clientSocket, GameState& gameState) {
 int main()
 {
     
-    std::cout << "Top of main function" << std::endl;
+    std::mutex gameStateMtx; // Mutex for thread safe access to game state
     /*
     -----------------------------------
     //  INITIALISE WINSOCK
@@ -117,7 +125,7 @@ int main()
 
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(56000); // Use any port that is available
+    serverAddr.sin_port = htons(MY_PORT); // Use any port that is available
     serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     // Bind the socket
@@ -146,6 +154,7 @@ int main()
 
     std::vector<ClientInfo> connectedClients; // Store client information
     GameState gameState;
+    gameState.players[0].isIt = true;
     gameState.gameRunning = true;
     int nextClientIndex = 0; // Initialize the next available index
 
@@ -159,14 +168,21 @@ int main()
         }
 
         connectedClients.emplace_back(nextClientIndex++, clientSocket);
-        connectedClients.back().thread = std::thread(handleClient, connectedClients.back().index, connectedClients.back().socket, std::ref(gameState));
+        connectedClients.back().thread = std::thread(handleClient, connectedClients.back().index, connectedClients.back().socket, std::ref(gameState), std::ref(gameStateMtx));
+        
+        #ifdef DEBUGGING
+        std::cout << connectedClients.at(i).socket << ", " << connectedClients.at(i).index << ", " << connectedClients.at(i).thread.get_id() << std::endl;
+        #endif
 
-
-        std::cout << "Accepted connection from client " << i << std::endl;
+        std::cout << "Accepted connection from client " << nextClientIndex << std::endl;
     
         // Send the assigned index to the client
         int clientIndex = connectedClients.back().index;
         send(clientSocket, reinterpret_cast<char*>(&clientIndex), sizeof(int), 0);
+        
+        #ifdef DEBUGGING
+        std::cout << "sending " << clientIndex << "..." << std::endl;
+        #endif
     }
     std::cout << "All clients connected!" << std::endl;
 
@@ -175,12 +191,6 @@ int main()
     //  GAME LOGIC
     -----------------------------------
     */
-
-    for (int i = 0; i < 3; ++i) {
-        gameState.players[i].position = sf::Vector2f(0, 0); // initial position
-        gameState.players[i].isIt = false;
-    }
-    gameState.players[0].isIt = true;
 
     while (gameState.gameRunning) {
         std::cout << "type 'close' to end the server" << std::endl;
